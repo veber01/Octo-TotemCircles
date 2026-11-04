@@ -5,7 +5,7 @@ Terrain-following 3D range rings around Shaman totems for **WoW 1.12.1 (OctoWoW 
 An addon for OctoWoW.
 It shows your own shaman totem ranges so you always know their effective range.
 
-## Range precedence
+Tested on ClassicAPI 1.19.2 (never versions are not confirmed)
 
 ## Installation
 
