@@ -1,11 +1,6 @@
 # TotemCircles
 
-Terrain-following 3D range rings around Shaman totems for **WoW 1.12.1 (OctoWoW / Turtle WoW)**
-
-An addon for OctoWoW.
-It shows your own shaman totem ranges so you always know their effective range.
-
-Tested on ClassicAPI 1.19.2 (never versions are not confirmed)
+Terrain-following 3D range rings with wall occlusion around Shaman totems for **WoW 1.12.1 (OctoWoW / Turtle WoW)**
 
 ## Installation
 
@@ -57,6 +52,8 @@ All commands start with `/tcr`. Distances are in **yards**.
 | `/tcr segments <12-192>` | Set ring smoothness. |
 | `/tcr terrain on` | Enable terrain following. |
 | `/tcr terrain off` | Disable terrain following. |
+| `/tcr occlusion on` | Enable collision-based wall occlusion (default). |
+| `/tcr occlusion off` | Disable wall occlusion. |
 
 ### Element slots and default colors
 
@@ -74,6 +71,13 @@ Example: `/tcr color 2 8B5A2B`
 Radius priority: **slot override → global override → spell ID override → totem name override → summon-spell description → Totemic Mastery fallback → range table → spell-database fallback → 20 yards**.
 
 All addon settings and overrides are saved in `TotemCirclesDB` and restored on login. WoW writes SavedVariables on `/reload` or a normal logout/exit. Auto-detected ranges may be inaccurate for server-specific totems; use `/tcr rangecheck` and overrides as needed.
+
+## Renderer notes (v0.4.4)
+
+- Continuous terrain-following rings with protection against sudden height jumps and disconnected platforms.
+- Camera-to-ring visibility checks include segment midpoints, faster refreshes and near-camera projection safeguards.
+- Occlusion uses collision traces, not the GPU depth buffer; decorative geometry may differ from collision geometry.
+- Settings, including occlusion, are saved in `TotemCirclesDB`.
 
 ## License
 
