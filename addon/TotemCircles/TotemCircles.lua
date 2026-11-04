@@ -1,4 +1,4 @@
--- TotemCircles v0.4.4
+-- TotemCircles v0.4.7
 TotemCirclesDB = TotemCirclesDB or {}
 local db = TotemCirclesDB
 local ELEMENTS = {"Fire", "Earth", "Water", "Air"}
@@ -44,7 +44,9 @@ local friendly = {
 }
 local elapsed = 0
 local last = {}
+
 local function say(s) DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffTotemCircles:|r "..s) end
+
 local function normalizeName(name)
   if not name then return "" end
   local n = string.lower(name)
@@ -53,6 +55,7 @@ local function normalizeName(name)
   n = string.gsub(n,"%s+%d+$","")
   return n
 end
+
 local function validRadius(n) return n and n >= 1 and n <= 50 end
 
 local function radiusInDescription(desc)
@@ -69,12 +72,14 @@ local function radiusInDescription(desc)
   end
   return nil
 end
+
 local function spellDesc(id)
   if not id or id<=0 or not C_Spell or type(C_Spell.GetSpellDescription)~="function" then return nil end
   local ok, desc=pcall(C_Spell.GetSpellDescription,id)
   if ok then return desc end
   return nil
 end
+
 local function masteryLearned()
   if db.mastery=="on" then return true end
   if db.mastery=="off" then return false end
@@ -90,6 +95,7 @@ local function masteryLearned()
   end)
   return ok and found or false
 end
+
 local function getRange(slot, name, spellID)
   if db.slotOverride[slot] then return db.slotOverride[slot], "slot override" end
   if db.globalRadius then return db.globalRadius, "global override" end
@@ -116,6 +122,7 @@ local function getRange(slot, name, spellID)
   end
   return FALLBACK, "fallback (unverified)"
 end
+
 local function getInfo(slot)
   if type(GetTotemInfo)~="function" then return nil end
   local have,name,start,duration,icon,modRate,spellID=GetTotemInfo(slot)
@@ -123,9 +130,11 @@ local function getInfo(slot)
   if not name or name=="" then return nil end
   return name,spellID
 end
+
 local function init()
   if db.enabled==nil then db.enabled=true end
   if type(db.colors)~="table" then db.colors={} end
+  if type(db.visible)~="table" then db.visible={} end
   if type(db.slotOverride)~="table" then db.slotOverride={} end
   if type(db.spellOverride)~="table" then db.spellOverride={} end
   if type(db.nameOverride)~="table" then db.nameOverride={} end
@@ -135,9 +144,12 @@ local function init()
   if db.terrain==nil then db.terrain=true end
   if db.occlusion==nil then db.occlusion=true end
   if db.mastery==nil then db.mastery="auto" end
-  for i=1,4 do if not db.colors[i] then db.colors[i]=DEFAULT_COLORS[i] end end
-
+  for i=1,4 do
+    if not db.colors[i] then db.colors[i]=DEFAULT_COLORS[i] end
+    if db.visible[i]==nil then db.visible[i]=true end
+  end
 end
+
 local function sync()
   if type(TCR_SetTotem)~="function" then return end
   if type(GetTotemInfo)=="function" then
@@ -145,7 +157,8 @@ local function sync()
       local name,id=getInfo(slot)
       local radius,source=FALLBACK,"inactive"
       if name then radius,source=getRange(slot,name,id) end
-      TCR_SetTotem(slot,name or "",radius)
+
+      TCR_SetTotem(slot,(db.visible[slot]~=false) and (name or "") or "",radius)
       last[slot]={name=name or "",id=id or 0,radius=radius,source=source}
     end
   end
@@ -156,6 +169,7 @@ local function sync()
     for slot=1,4 do TCR_SetColor(slot,db.colors[slot]) end
   end
 end
+
 local f=CreateFrame("Frame")
 f:RegisterEvent("PLAYER_ENTERING_WORLD")
 f:RegisterEvent("PLAYER_TOTEM_UPDATE")
@@ -165,6 +179,7 @@ f:SetScript("OnUpdate",function()
   elapsed=elapsed+(arg1 or 0)
   if elapsed>=0.5 then elapsed=0;sync() end
 end)
+
 init()
 local function numRadius(s) local n=tonumber(s); if validRadius(n) then return n end end
 local function colorInput(s)
@@ -174,10 +189,25 @@ local function colorInput(s)
   if (string.len(s)~=6 and string.len(s)~=8) or string.find(s,"[^0-9a-fA-F]") then return nil end
   return string.upper(s)
 end
+
 SLASH_TOTEMCIRCLES1="/tcr"
 SlashCmdList["TOTEMCIRCLES"]=function(msg)
   local cmd,a,b=string.match(msg or "","^(%S*)%s*(%S*)%s*(%S*)")
-  if cmd=="on" or cmd=="off" then
+  if cmd=="hide" or cmd=="show" then
+    local show=(cmd=="show")
+    local slot=tonumber(a)
+    if a=="all" then
+      for i=1,4 do db.visible[i]=show end
+      sync();say("All element rings "..(show and "shown" or "hidden"))
+    elseif slot and slot==math.floor(slot) and slot>=1 and slot<=4 then
+      db.visible[slot]=show
+      sync();say(ELEMENTS[slot].." ring "..(show and "shown" or "hidden"))
+    else
+      say("Usage: /tcr "..cmd.." <1-4|all> (1=Fire 2=Earth 3=Water 4=Air)")
+    end
+  elseif cmd=="visibility" then
+    for i=1,4 do say(i.." "..ELEMENTS[i]..": "..(db.visible[i]~=false and "shown" or "hidden")) end
+  elseif cmd=="on" or cmd=="off" then
     db.enabled=cmd=="on";sync();say(db.enabled and "Enabled" or "Disabled")
   elseif cmd=="color" then
     local slot=tonumber(a);local hex=colorInput(b)
@@ -291,12 +321,12 @@ SlashCmdList["TOTEMCIRCLES"]=function(msg)
     for slot=1,4 do
       local info=last[slot]
       if info and info.name~="" then
-        say(ELEMENTS[slot]..": "..info.name.." spellID="..tostring(info.id).." radius="..info.radius.." yd ("..info.source..") #"..db.colors[slot])
+        say(ELEMENTS[slot].." ["..(db.visible[slot]~=false and "shown" or "hidden").."]: "..info.name.." spellID="..tostring(info.id).." radius="..info.radius.." yd ("..info.source..") #"..db.colors[slot])
       end
     end
   else
     say("/tcr color <1-4> <hex> | colors | colorreset <1-4|all> | radius <yards> | auto | slot <1-4> <yards> | spell <spellID> <yards>")
     say("/tcr name <activeSlot> <yards> | clear spell|slot|name|global <id/slot> | overrides | mastery auto|on|off | rangecheck")
-    say("/tcr on|off | height <yards> | thickness <yards> | segments <n> | terrain on|off | occlusion on|off | status")
+    say("/tcr on|off | hide|show <1-4|all> | visibility | height <yards> | thickness <yards> | segments <n> | terrain on|off | occlusion on|off | status")
   end
 end

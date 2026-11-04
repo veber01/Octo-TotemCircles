@@ -27,6 +27,8 @@ All commands start with `/tcr`. Distances are in **yards**.
 |---|---|
 | `/tcr on` | Enable rings. |
 | `/tcr off` | Disable rings. |
+| `/tcr hide <1-4>` | Hide individual totem circles |
+| `/tcr show <1-4>` | Show individual totem circles |
 | `/tcr status` | Show active totems, selected ranges, range sources and settings. |
 | `/tcr radius <1-50>` | Set a global radius override. |
 | `/tcr auto` | Clear global and slot radius overrides; retain spell/name overrides. |
@@ -50,10 +52,8 @@ All commands start with `/tcr`. Distances are in **yards**.
 | `/tcr height <0.02-5>` | Set ring wall height. |
 | `/tcr thickness <0.01-2>` | Set ring thickness. |
 | `/tcr segments <12-192>` | Set ring smoothness. |
-| `/tcr terrain on` | Enable terrain following. |
-| `/tcr terrain off` | Disable terrain following. |
-| `/tcr occlusion on` | Enable collision-based wall occlusion (default). |
-| `/tcr occlusion off` | Disable wall occlusion. |
+| `/tcr terrain on/off` | Enable/Disable terrain following. |
+| `/tcr occlusion on/off` | Enable/Disable collision-based wall occlusion (default on). |
 
 ### Element slots and default colors
 
@@ -72,12 +72,17 @@ Radius priority: **slot override → global override → spell ID override → t
 
 All addon settings and overrides are saved in `TotemCirclesDB` and restored on login. WoW writes SavedVariables on `/reload` or a normal logout/exit. Auto-detected ranges may be inaccurate for server-specific totems; use `/tcr rangecheck` and overrides as needed.
 
-## Renderer notes (v0.4.4)
+## Renderer notes (v0.4.7)
 
 - Continuous terrain-following rings with protection against sudden height jumps and disconnected platforms.
 - Camera-to-ring visibility checks include segment midpoints, faster refreshes and near-camera projection safeguards.
 - Occlusion uses collision traces, not the GPU depth buffer; decorative geometry may differ from collision geometry.
 - Settings, including occlusion, are saved in `TotemCirclesDB`.
+
+## Gallery
+![ExampleSmall](https://raw.githubusercontent.com/veber01/Octo-TotemCircles/images/ExampleSmall.png?raw=true)
+
+![ExampleLarge](https://raw.githubusercontent.com/veber01/Octo-TotemCircles/images/ExampleLarge.png?raw=true)
 
 ## License
 
