@@ -13,6 +13,7 @@
 #include <d3d9.h>
 
 namespace {
+
 constexpr uintptr_t A_FRAME_UPDATE = 0x00614A90;
 constexpr uintptr_t A_LOAD_SCRIPT_FUNCTIONS = 0x00490250;
 constexpr uintptr_t A_REGISTER_FUNCTION = 0x00704120;
@@ -62,6 +63,7 @@ float ringHeight = 0.35f;
 float ringThickness = 0.10f;
 int ringSegments = 96;
 bool followTerrain = true;
+bool wallOcclusion = true;
 // Only one object is drawn at a time
 struct CachedRing {
   const void* object = nullptr;
@@ -71,6 +73,11 @@ struct CachedRing {
   bool terrain = false;
   DWORD sampledAt = 0;
   std::vector<Vec3> centerline;
+  std::vector<uint8_t> validFloor; 
+  std::vector<uint8_t> visible;
+  std::vector<uint8_t> segmentVisible;
+  Vec3 visibilityCamera{};
+  DWORD visibilityAt = 0;
 };
 CachedRing cache[4];
 // Slots are Fire=1, Earth=2, Water=3, Air=4
@@ -151,14 +158,55 @@ int __fastcall Script_SetMeshConfig(void* L) {
   return 1;
 }
 
-float SurfaceZ(float x,float y,float originZ) {
-  Vec3 from{x,y,originZ+60.f}, to{x,y,originZ-60.f}, hit{};
+int __fastcall Script_SetOcclusion(void* L) {
+  const double value = reinterpret_cast<LuaNumber>(A_LUA_TONUMBER)(L, 1);
+  wallOcclusion = std::isfinite(value) && value != 0.0;
+  return 0;
+}
+
+constexpr float STEP_UP = 1.25f;
+constexpr float STEP_DOWN = 3.5f;
+constexpr float TRACE_EPSILON = 0.08f;
+constexpr int MAX_RADIAL_STEPS = 16;
+
+bool NearbyFloor(float x, float y, float expectedZ, float &resultZ) {
+  const Vec3 from{x,y,expectedZ+STEP_UP};
+  const Vec3 to{x,y,expectedZ-STEP_DOWN};
+  Vec3 hit{};
   float fraction=1.f;
   const char found = reinterpret_cast<WorldIntersect>(A_WORLD_INTERSECT)(
     &from,&to,0,&hit,&fraction,0x100111);
-  if(found && std::isfinite(hit.z) && fraction>=0.f && fraction<=1.f)
-    return hit.z;
-  return originZ;
+  if(!found || !std::isfinite(hit.z) || !std::isfinite(fraction) ||
+     fraction<0.f || fraction>1.f) return false;
+
+  if(hit.z > expectedZ+STEP_UP+TRACE_EPSILON ||
+     hit.z < expectedZ-STEP_DOWN-TRACE_EPSILON) return false;
+  resultZ=hit.z;
+  return true;
+}
+
+struct FloorSample {
+  float z;
+  bool valid;
+};
+
+
+FloorSample TraceFloorRadially(const Vec3& center, float angle, float radius) {
+  const float cs=std::cos(angle),sn=std::sin(angle);
+  const int steps=std::max(1,std::min(64,
+    static_cast<int>(std::ceil(radius/1.0f))));
+  float floorZ=center.z;
+  for(int j=1;j<=steps;++j) {
+    const float distance=radius*static_cast<float>(j)/steps;
+    const float x=center.x+cs*distance;
+    const float y=center.y+sn*distance;
+    float z=0.f;
+    if(!NearbyFloor(x,y,floorZ,z)) {
+      return {floorZ,false};
+    }
+    floorZ=z;
+  }
+  return {floorZ,true};
 }
 
 void UpdateRing(CachedRing& c, const void* object,const Vec3& pos,float radius) {
@@ -166,22 +214,77 @@ void UpdateRing(CachedRing& c, const void* object,const Vec3& pos,float radius) 
   const float dx=pos.x-c.center.x, dy=pos.y-c.center.y, dz=pos.z-c.center.z;
   if(c.object==object && c.radius==radius && c.segments==ringSegments &&
      c.terrain==followTerrain && c.centerline.size()==static_cast<size_t>(ringSegments+1) &&
-     dx*dx+dy*dy+dz*dz<0.01f && now-c.sampledAt<2000) return;
+     c.validFloor.size()==static_cast<size_t>(ringSegments+1) &&
+     dx*dx+dy*dy+dz*dz<0.01f && now-c.sampledAt<5000) return;
   c.object=object; c.center=pos; c.radius=radius;
   c.segments=ringSegments; c.terrain=followTerrain; c.sampledAt=now;
   c.centerline.clear(); c.centerline.reserve(ringSegments+1);
+  c.validFloor.clear(); c.validFloor.reserve(ringSegments+1);
   for(int i=0;i<=ringSegments;++i) {
     const float a=2.f*PI*static_cast<float>(i%ringSegments)/ringSegments;
     const float x=pos.x + std::cos(a)*radius;
     const float y=pos.y + std::sin(a)*radius;
-    const float z=followTerrain ? SurfaceZ(x,y,pos.z) : pos.z;
-    c.centerline.push_back({x,y,z+0.08f});
+    const FloorSample floor = followTerrain
+      ? TraceFloorRadially(pos,a,radius)
+      : FloorSample{pos.z,true};
+    c.centerline.push_back({x,y,floor.z+0.08f});
+    c.validFloor.push_back(floor.valid ? 1 : 0);
+  }
+}
+// World-position points are projected using WoW's camera matrix and drawn
+// as pretransformed D3D9 triangles. This is the in-game-tested render-5 path.
+
+bool HasCameraLineOfSight(const Vec3& camera, const Vec3& target) {
+  const float vx=target.x-camera.x, vy=target.y-camera.y, vz=target.z-camera.z;
+  const float distance=std::sqrt(vx*vx+vy*vy+vz*vz);
+  if(!std::isfinite(distance) || distance<0.40f) return true;
+
+  const float inset=std::min(0.25f, distance*0.25f);
+  const Vec3 end{target.x-vx*(inset/distance),
+                 target.y-vy*(inset/distance),
+                 target.z-vz*(inset/distance)};
+  Vec3 hit{};
+  float fraction=1.f;
+  const char found=reinterpret_cast<WorldIntersect>(A_WORLD_INTERSECT)(
+      &camera,&end,0,&hit,&fraction,0x100111);
+  if(!found || !std::isfinite(fraction) || fraction<0.f || fraction>=0.985f) return true;
+  const float hitDistance=fraction*(distance-inset);
+  return hitDistance<=0.20f;
+}
+
+void UpdateVisibility(CachedRing& c, const Vec3& camera, float height) {
+  if(!wallOcclusion) return;
+  const DWORD now=GetTickCount();
+  const float dx=c.visibilityCamera.x-camera.x;
+  const float dy=c.visibilityCamera.y-camera.y;
+  const float dz=c.visibilityCamera.z-camera.z;
+  const size_t n=c.centerline.size();
+  if(c.visible.size()==n && c.segmentVisible.size()==n-1 &&
+     dx*dx+dy*dy+dz*dz<0.015625f &&
+     now-c.visibilityAt<100 && c.visibilityAt>=c.sampledAt) return;
+
+  c.visible.assign(n,1);
+  c.segmentVisible.assign(n-1,0);
+  c.visibilityCamera=camera;
+  c.visibilityAt=now;
+  const float lift=std::max(0.18f,height*0.5f);
+  for(size_t i=0;i<n;++i) {
+    if(!c.validFloor[i]) {c.visible[i]=0;continue;}
+    const Vec3& point=c.centerline[i];
+    c.visible[i]=HasCameraLineOfSight(camera,{point.x,point.y,point.z+lift})?1:0;
+  }
+
+  for(size_t i=1;i<n;++i) {
+    if(!c.visible[i-1] || !c.visible[i]) continue;
+    const Vec3& a=c.centerline[i-1];
+    const Vec3& b=c.centerline[i];
+    const Vec3 midpoint{(a.x+b.x)*0.5f,(a.y+b.y)*0.5f,
+                        (a.z+b.z)*0.5f+lift};
+    c.segmentVisible[i-1]=HasCameraLineOfSight(camera,midpoint)?1:0;
   }
 }
 
-// World-position points are projected using WoW's camera matrix and drawn
-// as pretransformed D3D9 triangles. This is the in-game-tested render-5 path.
-void DrawRing(const CachedRing& c, float height,float thickness,uint32_t color) {
+void DrawRing(CachedRing& c, float height,float thickness,uint32_t color) {
   if(c.centerline.size()<3) return;
   void* gxDev = at<void*>(A_GX_DEVICE);
   if(!gxDev || field<void*>(gxDev,0) != reinterpret_cast<void*>(A_GX_D3D_VTABLE) ||
@@ -214,12 +317,15 @@ void DrawRing(const CachedRing& c, float height,float thickness,uint32_t color) 
   const void* cam = world ? field<const void*>(world,O_WORLD_CAMERA) : nullptr;
   if(cam && SUCCEEDED(dev->GetViewport(&vp)) && vp.Width && vp.Height) {
     const auto* cp=reinterpret_cast<const float*>(reinterpret_cast<uintptr_t>(cam)+O_CAMERA_POSITION);
+    const Vec3 camera{cp[0],cp[1],cp[2]};
+    UpdateVisibility(c,camera,height);
     const float* matrix=reinterpret_cast<const float*>(reinterpret_cast<uintptr_t>(world)+O_WORLD_VIEW_PROJECTION);
     auto project=[&](const Vec3& pt, ScreenVertex& output)->bool {
       const float rel[4]={pt.x-cp[0],pt.y-cp[1],pt.z-cp[2],0.f};
       float clip[4]={};
       reinterpret_cast<TransformVector>(A_TRANSFORM_VECTOR)(clip,rel,matrix);
-      if(!std::isfinite(clip[3]) || clip[3]<=0.001f) return false;
+
+      if(!std::isfinite(clip[3]) || clip[3]<=0.30f) return false;
       const float nx=clip[0]/clip[3],ny=clip[1]/clip[3],nz=clip[2]/clip[3];
       if(!std::isfinite(nx)||!std::isfinite(ny)||!std::isfinite(nz)||
          fabsf(nx)>2.f||fabsf(ny)>2.f) return false;
@@ -236,7 +342,15 @@ void DrawRing(const CachedRing& c, float height,float thickness,uint32_t color) 
       }
     };
     for(size_t i=1;i<c.centerline.size();++i) {
+      if(!c.validFloor[i-1] || !c.validFloor[i]) continue;
+      if(wallOcclusion && (c.visible.size()!=c.centerline.size() ||
+           c.segmentVisible.size()!=c.centerline.size()-1 ||
+           !c.segmentVisible[i-1])) continue;
       const Vec3& a=c.centerline[i-1]; const Vec3& b=c.centerline[i];
+
+      const float horizontal=std::hypot(b.x-a.x,b.y-a.y);
+      const float maxStep=std::max(0.75f,1.15f*horizontal);
+      if(std::fabs(b.z-a.z)>maxStep) continue;
       const float ax=a.x-c.center.x,ay=a.y-c.center.y;
       const float bx=b.x-c.center.x,by=b.y-c.center.y;
       const float al=std::sqrt(ax*ax+ay*ay),bl=std::sqrt(bx*bx+by*by);
@@ -272,6 +386,7 @@ void __fastcall LoadScriptsHook() {
   reg("TCR_IsReady", Script_IsReady);
   reg("TCR_SetMeshConfig", Script_SetMeshConfig);
   reg("TCR_SetColor", Script_SetColor);
+  reg("TCR_SetOcclusion", Script_SetOcclusion);
 }
 
 // Draws only actual units owned by the player and with an exact matching active totem name.
@@ -320,8 +435,9 @@ bool initHooks() {
   return true;
 }
 DWORD WINAPI initWorker(void*) {return initHooks()?0:1;}
-} // namespace
+}
 
+// namespace
 extern "C" DWORD __cdecl Load() { return initHooks()?0:1; }
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
   if(reason == DLL_PROCESS_ATTACH) {
@@ -331,5 +447,6 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
       if(worker) CloseHandle(worker);
     }
   }
+
   return TRUE;
 }

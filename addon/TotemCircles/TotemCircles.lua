@@ -1,10 +1,10 @@
--- TotemCircles v0.4.2
+-- TotemCircles v0.4.4
 TotemCirclesDB = TotemCirclesDB or {}
 local db = TotemCirclesDB
 local ELEMENTS = {"Fire", "Earth", "Water", "Air"}
 local DEFAULT_COLORS = {"FF3030", "8B5A2B", "3090FF", "A0A0A0"}
 local FALLBACK = 20
--- Explicit defaults are only used when the spell description cannot provide a usable range
+
 local ranges = {
   ["earthbind totem"] = 10,
   ["stoneclaw totem"] = 8,
@@ -30,7 +30,7 @@ local ranges = {
   ["tranquil air totem"] = 20,
   ["sentry totem"] = 20
 }
--- Totemic Mastery
+
 local friendly = {
   ["stoneskin totem"]=true, ["strength of earth totem"]=true,
   ["tremor totem"]=true, ["flametongue totem"]=true,
@@ -54,7 +54,7 @@ local function normalizeName(name)
   return n
 end
 local function validRadius(n) return n and n >= 1 and n <= 50 end
--- Parse only explicit wording
+
 local function radiusInDescription(desc)
   if type(desc)~="string" then return nil end
   local t=string.lower(desc)
@@ -101,6 +101,7 @@ local function getRange(slot, name, spellID)
   local fromText=radiusInDescription(desc)
 
   if fromText then return fromText, "summon description" end
+
   if friendly[normalized] and masteryLearned() then
     return 30, "Totemic Mastery fallback (verify)"
   end
@@ -132,6 +133,7 @@ local function init()
   if db.thickness==nil then db.thickness=0.10 end
   if db.segments==nil then db.segments=96 end
   if db.terrain==nil then db.terrain=true end
+  if db.occlusion==nil then db.occlusion=true end
   if db.mastery==nil then db.mastery="auto" end
   for i=1,4 do if not db.colors[i] then db.colors[i]=DEFAULT_COLORS[i] end end
 
@@ -149,6 +151,7 @@ local function sync()
   end
   if type(TCR_Enable)=="function" then TCR_Enable(db.enabled and 1 or 0) end
   if type(TCR_SetMeshConfig)=="function" then TCR_SetMeshConfig(db.height,db.thickness,db.segments,db.terrain and 1 or 0) end
+  if type(TCR_SetOcclusion)=="function" then TCR_SetOcclusion(db.occlusion and 1 or 0) end
   if type(TCR_SetColor)=="function" then
     for slot=1,4 do TCR_SetColor(slot,db.colors[slot]) end
   end
@@ -280,8 +283,11 @@ SlashCmdList["TOTEMCIRCLES"]=function(msg)
   elseif cmd=="terrain" then
     if a~="on" and a~="off" then say("Usage: /tcr terrain on|off") return end
     db.terrain=a=="on";sync();say("Terrain following: "..a)
+  elseif cmd=="occlusion" then
+    if a~="on" and a~="off" then say("Usage: /tcr occlusion on|off") return end
+    db.occlusion=a=="on";sync();say("Wall occlusion: "..a)
   elseif cmd=="status" then
-    say("DLL: "..tostring(type(TCR_IsReady)=="function" and TCR_IsReady() or false)..", enabled="..tostring(db.enabled)..", terrain="..tostring(db.terrain)..", mastery="..tostring(db.mastery).." (learned="..tostring(masteryLearned()).."), height="..db.height..", thickness="..db.thickness..", segments="..db.segments)
+    say("DLL: "..tostring(type(TCR_IsReady)=="function" and TCR_IsReady() or false)..", enabled="..tostring(db.enabled)..", terrain="..tostring(db.terrain)..", occlusion="..tostring(db.occlusion)..", mastery="..tostring(db.mastery).." (learned="..tostring(masteryLearned()).."), height="..db.height..", thickness="..db.thickness..", segments="..db.segments)
     for slot=1,4 do
       local info=last[slot]
       if info and info.name~="" then
@@ -291,6 +297,6 @@ SlashCmdList["TOTEMCIRCLES"]=function(msg)
   else
     say("/tcr color <1-4> <hex> | colors | colorreset <1-4|all> | radius <yards> | auto | slot <1-4> <yards> | spell <spellID> <yards>")
     say("/tcr name <activeSlot> <yards> | clear spell|slot|name|global <id/slot> | overrides | mastery auto|on|off | rangecheck")
-    say("/tcr on|off | height <yards> | thickness <yards> | segments <n> | terrain on|off | status")
+    say("/tcr on|off | height <yards> | thickness <yards> | segments <n> | terrain on|off | occlusion on|off | status")
   end
 end
