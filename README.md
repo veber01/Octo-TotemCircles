@@ -1,5 +1,8 @@
 # TotemCircles v0.4.2
 
+An addon for OctoWoW.
+It shows your own shaman totem ranges so you always know their effective range.
+
 ## Range precedence
 
 1. Slot override (`/tcr slot`) then global radius (`/tcr radius`)
