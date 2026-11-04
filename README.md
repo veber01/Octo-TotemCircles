@@ -1,32 +1,75 @@
-# TotemCircles v0.4.2
+# TotemCircles
 
-## Range precedence
+Terrain-following 3D range rings around Shaman totems for **WoW 1.12.1 (OctoWoW / Turtle WoW)**
 
-1. Slot override (`/tcr slot`) then global radius (`/tcr radius`)
-2. Saved per-spell override (`/tcr spell <ID> <yards>`)
-3. Saved per-name override (`/tcr name <slot> <yards>`)
-4. Parsed explicit radius in the summon spell description (including Stoneskin 8071)
-5. Totemic Mastery heuristic, only if no description radius found
-6. Vanilla-oriented fallback table; then DBC fallback; then 20-yard unknown default
+## Installation
 
+1. Load `ClassicAPI.dll` and `TotemCircles.dll` with your client DLL loader (ClassicAPI first).
+2. Copy `addon/TotemCircles` to `Interface/AddOns/TotemCircles`.
+3. Enable the addon and enter `/tcr status` in-game.
 
-## Old overrides / enabling automatic selection
+### Build from source (Windows / Visual Studio 2026)
 
-Run `/tcr overrides` to see any saved per-spell or per-name overrides. If 8071 was overridden earlier, clear it:
+Requires CMake, Git, and Visual Studio C++ Build Tools with x86 support.
 
-```
-/tcr clear spell 8071
-/tcr clear name 2
-/tcr clear slot 2
-/tcr clear global
-/tcr auto
-/tcr rangecheck
+```powershell
+cmake -S . -B build -G "Visual Studio 18 2026" -A Win32
+cmake --build build --config Release --parallel
 ```
 
-Only use `clear name 2` while Stoneskin is currently in the Earth slot, and only if you want to remove its stored name override. `/tcr auto` clears slot and global radius overrides, **not** saved spell/name values.
+Output: `build/Release/TotemCircles.dll`.
 
-## Saved settings
+## Commands
 
-All `/tcr` configured colors, ring geometry, terrain setting, enable state, mastery preference, and per-name/per-spell overrides are stored in `TotemCirclesDB` via `## SavedVariables: TotemCirclesDB` in the TOC. Settings are loaded on addon initialization and re-applied to the native DLL via periodic sync and game events. WoW writes SavedVariables on logout/exit or `/reload`, **not** necessarily on an unexpected crash. Do not delete `WTF/Account/<account>/SavedVariables/TotemCircles.lua` if you want to keep settings.
+All commands start with `/tcr`. Distances are in **yards**.
 
-Per-slot/default order: Fire=1, Earth=2, Water=3, Air=4. Set colors with `/tcr color <1-4> <RRGGBB|AARRGGBB>`.
+| Command | Description |
+|---|---|
+| `/tcr on` | Enable rings. |
+| `/tcr off` | Disable rings. |
+| `/tcr status` | Show active totems, selected ranges, range sources and settings. |
+| `/tcr radius <1-50>` | Set a global radius override. |
+| `/tcr auto` | Clear global and slot radius overrides; retain spell/name overrides. |
+| `/tcr slot <1-4> <1-50>` | Override radius for an elemental slot. |
+| `/tcr spell <spellID> <1-50>` | Override radius for a summon spell ID. |
+| `/tcr name <activeSlot> <1-50>` | Override radius for the active totem's name, across ranks. |
+| `/tcr clear global` | Remove the global radius override. |
+| `/tcr clear slot <1-4>` | Remove an elemental slot override. |
+| `/tcr clear spell <spellID>` | Remove a spell ID override. |
+| `/tcr clear name <activeSlot>` | Remove the active totem's name override. |
+| `/tcr overrides` | List saved radius overrides. |
+| `/tcr rangecheck` | Show detected radii, sources and spell descriptions. |
+| `/tcr mastery auto` | Detect Totemic Mastery automatically. |
+| `/tcr mastery on` | Force Totemic Mastery fallback on. |
+| `/tcr mastery off` | Force Totemic Mastery fallback off. |
+| `/tcr color <1-4> <RRGGBB>` | Set an elemental ring color using RGB hex. |
+| `/tcr color <1-4> <AARRGGBB>` | Set a ring color with alpha (transparency). |
+| `/tcr colors` | List current colors. |
+| `/tcr colorreset <1-4>` | Reset one color to default. |
+| `/tcr colorreset all` | Reset all colors to default. |
+| `/tcr height <0.02-5>` | Set ring wall height. |
+| `/tcr thickness <0.01-2>` | Set ring thickness. |
+| `/tcr segments <12-192>` | Set ring smoothness. |
+| `/tcr terrain on` | Enable terrain following. |
+| `/tcr terrain off` | Disable terrain following. |
+
+### Element slots and default colors
+
+| Slot | Element | Default color |
+|---|---|---|
+| `1` | Fire | `FF3030` (red) |
+| `2` | Earth | `8B5A2B` (brown) |
+| `3` | Water | `3090FF` (blue) |
+| `4` | Air | `A0A0A0` (gray) |
+
+Example: `/tcr color 2 8B5A2B`
+
+## Automatic ranges and saved settings
+
+Radius priority: **slot override → global override → spell ID override → totem name override → summon-spell description → Totemic Mastery fallback → range table → spell-database fallback → 20 yards**.
+
+All addon settings and overrides are saved in `TotemCirclesDB` and restored on login. WoW writes SavedVariables on `/reload` or a normal logout/exit. Auto-detected ranges may be inaccurate for server-specific totems; use `/tcr rangecheck` and overrides as needed.
+
+## License
+
+See [LICENSE](LICENSE).
