@@ -80,9 +80,9 @@ All addon settings and overrides are saved in `TotemCirclesDB` and restored on l
 - Settings, including occlusion, are saved in `TotemCirclesDB`.
 
 ## Gallery
-![ExampleSmall](https://raw.githubusercontent.com/veber01/Octo-TotemCircles/images/ExampleSmall.png?raw=true)
+![ExampleSmall](https://github.com/veber01/Octo-TotemCircles/blob/main/images/ExampleSmall.png)
 
-![ExampleLarge](https://raw.githubusercontent.com/veber01/Octo-TotemCircles/images/ExampleLarge.png?raw=true)
+![ExampleLarge](https://github.com/veber01/Octo-TotemCircles/blob/main/images/ExampleLarge.png)
 
 ## License
 
