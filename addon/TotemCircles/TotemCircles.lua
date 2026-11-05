@@ -1,4 +1,4 @@
--- TotemCircles v0.4.7
+-- TotemCircles v0.4.8
 TotemCirclesDB = TotemCirclesDB or {}
 local db = TotemCirclesDB
 local ELEMENTS = {"Fire", "Earth", "Water", "Air"}

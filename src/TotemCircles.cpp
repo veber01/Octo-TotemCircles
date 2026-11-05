@@ -13,7 +13,6 @@
 #include <d3d9.h>
 
 namespace {
-
 constexpr uintptr_t A_FRAME_UPDATE = 0x00614A90;
 constexpr uintptr_t A_LOAD_SCRIPT_FUNCTIONS = 0x00490250;
 constexpr uintptr_t A_REGISTER_FUNCTION = 0x00704120;
@@ -25,7 +24,6 @@ constexpr uintptr_t A_GET_NAME = 0x00609210;
 constexpr uintptr_t A_WORLD_INTERSECT = 0x00672170;
 constexpr uintptr_t A_GX_DEVICE = 0x00C0ED38;
 constexpr uintptr_t A_GX_D3D_VTABLE = 0x00809EF8;
-// ClassicAPI Nearest.cpp uses this engine transform for camera-relative vertices.
 constexpr uintptr_t A_WORLD_FRAME = 0x00B4B2BC;
 constexpr uintptr_t A_TRANSFORM_VECTOR = 0x007BCB40;
 constexpr int O_WORLD_CAMERA = 0x65B8;
@@ -55,7 +53,7 @@ using TransformVector = float*(__fastcall*)(float*, const float*, const float*);
 
 FrameUpdate previousFrame = nullptr;
 LoadScripts previousLoad = nullptr;
-// Read from the same game/render thread as the hook
+
 struct Slot { char name[128]; float radius = 20.f; bool active = false; };
 Slot slots[4];
 bool enabled = true;
@@ -64,7 +62,7 @@ float ringThickness = 0.10f;
 int ringSegments = 96;
 bool followTerrain = true;
 bool wallOcclusion = true;
-// Only one object is drawn at a time
+
 struct CachedRing {
   const void* object = nullptr;
   Vec3 center{};
@@ -72,16 +70,68 @@ struct CachedRing {
   int segments = 0;
   bool terrain = false;
   DWORD sampledAt = 0;
+  int nextSample = 0;
+  bool complete = false;
   std::vector<Vec3> centerline;
-  std::vector<uint8_t> validFloor; 
+  std::vector<uint8_t> validFloor;
   std::vector<uint8_t> visible;
   std::vector<uint8_t> segmentVisible;
   Vec3 visibilityCamera{};
   DWORD visibilityAt = 0;
 };
 CachedRing cache[4];
-// Slots are Fire=1, Earth=2, Water=3, Air=4
-// Format ARGB: alpha, red, green, blue
+
+constexpr int MAX_NEW_SPOKES_PER_WINDOW = 4;
+constexpr DWORD SAMPLE_WINDOW_MS = 16;
+DWORD samplingWindowStart = 0;
+int samplingSpokesRemaining = MAX_NEW_SPOKES_PER_WINDOW;
+int AvailableSpokes(DWORD now) {
+  if(samplingWindowStart == 0 || now - samplingWindowStart >= SAMPLE_WINDOW_MS) {
+    samplingWindowStart = now;
+    samplingSpokesRemaining = MAX_NEW_SPOKES_PER_WINDOW;
+  }
+  return samplingSpokesRemaining;
+}
+struct ScreenVertex { float x,y,z,rhw; uint32_t color; };
+
+std::vector<ScreenVertex> screenTriangles;
+IDirect3DDevice9* stateDevice = nullptr;
+IDirect3DStateBlock9* stateBlock = nullptr;
+IDirect3DVertexBuffer9* vertexBuffer = nullptr;
+constexpr DWORD RING_FVF = D3DFVF_XYZRHW | D3DFVF_DIFFUSE;
+constexpr UINT RING_VERTEX_CAPACITY = MAX_SEGMENTS * 12;
+void ReleaseRenderObjects() {
+  if(vertexBuffer) { vertexBuffer->Release(); vertexBuffer=nullptr; }
+  if(stateBlock) { stateBlock->Release(); stateBlock=nullptr; }
+}
+IDirect3DVertexBuffer9* RingVertexBuffer(IDirect3DDevice9* dev) {
+  if(vertexBuffer) return vertexBuffer;
+  if(FAILED(dev->CreateVertexBuffer(RING_VERTEX_CAPACITY*sizeof(ScreenVertex),
+    D3DUSAGE_DYNAMIC|D3DUSAGE_WRITEONLY,RING_FVF,D3DPOOL_DEFAULT,
+    &vertexBuffer,nullptr))) return nullptr;
+  return vertexBuffer;
+}
+IDirect3DStateBlock9* SavedStateFor(IDirect3DDevice9* dev) {
+  if(dev != stateDevice) {
+    ReleaseRenderObjects();
+    stateDevice = dev;
+  }
+  if(!stateBlock && FAILED(dev->CreateStateBlock(D3DSBT_ALL,&stateBlock)))
+    return nullptr;
+  if(!stateBlock) return nullptr;
+  if(SUCCEEDED(stateBlock->Capture())) return stateBlock;
+
+  stateBlock->Release();
+  stateBlock = nullptr;
+  if(FAILED(dev->CreateStateBlock(D3DSBT_ALL,&stateBlock)) || !stateBlock)
+    return nullptr;
+  if(FAILED(stateBlock->Capture())) {
+    stateBlock->Release(); stateBlock = nullptr;
+    return nullptr;
+  }
+  return stateBlock;
+}
+
 uint32_t colors[4] = {0xB0FF3030, 0xB08B5A2B, 0xB03090FF, 0xB0A0A0A0};
 std::atomic<bool> initialized{false};
 std::atomic<bool> ready{false};
@@ -178,7 +228,6 @@ bool NearbyFloor(float x, float y, float expectedZ, float &resultZ) {
     &from,&to,0,&hit,&fraction,0x100111);
   if(!found || !std::isfinite(hit.z) || !std::isfinite(fraction) ||
      fraction<0.f || fraction>1.f) return false;
-
   if(hit.z > expectedZ+STEP_UP+TRACE_EPSILON ||
      hit.z < expectedZ-STEP_DOWN-TRACE_EPSILON) return false;
   resultZ=hit.z;
@@ -189,7 +238,6 @@ struct FloorSample {
   float z;
   bool valid;
 };
-
 
 FloorSample TraceFloorRadially(const Vec3& center, float angle, float radius) {
   const float cs=std::cos(angle),sn=std::sin(angle);
@@ -212,27 +260,38 @@ FloorSample TraceFloorRadially(const Vec3& center, float angle, float radius) {
 void UpdateRing(CachedRing& c, const void* object,const Vec3& pos,float radius) {
   const DWORD now=GetTickCount();
   const float dx=pos.x-c.center.x, dy=pos.y-c.center.y, dz=pos.z-c.center.z;
-  if(c.object==object && c.radius==radius && c.segments==ringSegments &&
-     c.terrain==followTerrain && c.centerline.size()==static_cast<size_t>(ringSegments+1) &&
-     c.validFloor.size()==static_cast<size_t>(ringSegments+1) &&
-     dx*dx+dy*dy+dz*dz<0.01f && now-c.sampledAt<5000) return;
-  c.object=object; c.center=pos; c.radius=radius;
-  c.segments=ringSegments; c.terrain=followTerrain; c.sampledAt=now;
-  c.centerline.clear(); c.centerline.reserve(ringSegments+1);
-  c.validFloor.clear(); c.validFloor.reserve(ringSegments+1);
-  for(int i=0;i<=ringSegments;++i) {
-    const float a=2.f*PI*static_cast<float>(i%ringSegments)/ringSegments;
-    const float x=pos.x + std::cos(a)*radius;
-    const float y=pos.y + std::sin(a)*radius;
-    const FloorSample floor = followTerrain
-      ? TraceFloorRadially(pos,a,radius)
-      : FloorSample{pos.z,true};
+  if(c.object!=object || c.radius!=radius || c.segments!=ringSegments ||
+     c.terrain!=followTerrain || dx*dx+dy*dy+dz*dz>=0.01f) {
+    c.object=object; c.center=pos; c.radius=radius;
+    c.segments=ringSegments; c.terrain=followTerrain; c.sampledAt=now;
+    c.nextSample=0; c.complete=false;
+    c.centerline.clear(); c.centerline.reserve(ringSegments+1);
+    c.validFloor.clear(); c.validFloor.reserve(ringSegments+1);
+    c.visible.clear(); c.segmentVisible.clear();
+    c.visibilityAt=0;
+  }
+  if(c.complete) return;
+
+  int allowance = followTerrain ? AvailableSpokes(now) : ringSegments;
+  while(c.nextSample < ringSegments && allowance > 0) {
+    const int i=c.nextSample;
+    const float a=2.f*PI*static_cast<float>(i)/ringSegments;
+    const float x=pos.x+std::cos(a)*radius;
+    const float y=pos.y+std::sin(a)*radius;
+    const FloorSample floor=followTerrain
+      ? TraceFloorRadially(pos,a,radius) : FloorSample{pos.z,true};
     c.centerline.push_back({x,y,floor.z+0.08f});
     c.validFloor.push_back(floor.valid ? 1 : 0);
+    ++c.nextSample;
+    --allowance;
+    if(followTerrain) --samplingSpokesRemaining;
+  }
+  if(c.nextSample==ringSegments) {
+    c.centerline.push_back(c.centerline.front());
+    c.validFloor.push_back(c.validFloor.front());
+    c.complete=true;
   }
 }
-// World-position points are projected using WoW's camera matrix and drawn
-// as pretransformed D3D9 triangles. This is the in-game-tested render-5 path.
 
 bool HasCameraLineOfSight(const Vec3& camera, const Vec3& target) {
   const float vx=target.x-camera.x, vy=target.y-camera.y, vz=target.z-camera.z;
@@ -285,19 +344,19 @@ void UpdateVisibility(CachedRing& c, const Vec3& camera, float height) {
 }
 
 void DrawRing(CachedRing& c, float height,float thickness,uint32_t color) {
-  if(c.centerline.size()<3) return;
+
+  if(!c.complete || c.centerline.size()<3) return;
   void* gxDev = at<void*>(A_GX_DEVICE);
   if(!gxDev || field<void*>(gxDev,0) != reinterpret_cast<void*>(A_GX_D3D_VTABLE) ||
      !field<int>(gxDev,O_D3D_ALIVE)) return;
   IDirect3DDevice9* dev=field<IDirect3DDevice9*>(gxDev,O_D3D_DEVICE);
   if(!dev) return;
-  IDirect3DStateBlock9* saved=nullptr;
-  if(FAILED(dev->CreateStateBlock(D3DSBT_ALL,&saved)) || !saved) return;
-  if(FAILED(saved->Capture())) { saved->Release(); return; }
+  IDirect3DStateBlock9* saved=SavedStateFor(dev);
+  if(!saved) return;
   dev->SetVertexShader(nullptr); dev->SetPixelShader(nullptr);
   dev->SetTexture(0,nullptr);
   dev->SetRenderState(D3DRS_LIGHTING,FALSE);
-  dev->SetRenderState(D3DRS_ZENABLE,D3DZB_FALSE);
+  dev->SetRenderState(D3DRS_ZENABLE,D3DZB_FALSE); // screen-space projection
   dev->SetRenderState(D3DRS_ZWRITEENABLE,FALSE);
   dev->SetRenderState(D3DRS_ALPHABLENDENABLE,TRUE);
   dev->SetRenderState(D3DRS_SRCBLEND,D3DBLEND_SRCALPHA);
@@ -311,7 +370,6 @@ void DrawRing(CachedRing& c, float height,float thickness,uint32_t color) {
   dev->SetTextureStageState(0,D3DTSS_ALPHAARG1,D3DTA_DIFFUSE);
   dev->SetTextureStageState(1,D3DTSS_COLOROP,D3DTOP_DISABLE);
 
-  struct ScreenVertex { float x,y,z,rhw; uint32_t color; };
   D3DVIEWPORT9 vp{};
   void* world = at<void*>(A_WORLD_FRAME);
   const void* cam = world ? field<const void*>(world,O_WORLD_CAMERA) : nullptr;
@@ -324,7 +382,6 @@ void DrawRing(CachedRing& c, float height,float thickness,uint32_t color) {
       const float rel[4]={pt.x-cp[0],pt.y-cp[1],pt.z-cp[2],0.f};
       float clip[4]={};
       reinterpret_cast<TransformVector>(A_TRANSFORM_VECTOR)(clip,rel,matrix);
-
       if(!std::isfinite(clip[3]) || clip[3]<=0.30f) return false;
       const float nx=clip[0]/clip[3],ny=clip[1]/clip[3],nz=clip[2]/clip[3];
       if(!std::isfinite(nx)||!std::isfinite(ny)||!std::isfinite(nz)||
@@ -333,12 +390,13 @@ void DrawRing(CachedRing& c, float height,float thickness,uint32_t color) {
               vp.Y+(1.f-ny)*0.5f*vp.Height,0.25f,1.f,color};
       return true;
     };
-    std::vector<ScreenVertex> triangles;
-    triangles.reserve((c.centerline.size()-1)*12);
+    screenTriangles.clear();
+    if(screenTriangles.capacity() < static_cast<size_t>(MAX_SEGMENTS*12))
+      screenTriangles.reserve(MAX_SEGMENTS*12);
     auto tri=[&](const Vec3 &a,const Vec3 &b,const Vec3 &d){
       ScreenVertex aa,bb,dd;
       if(project(a,aa)&&project(b,bb)&&project(d,dd)) {
-        triangles.push_back(aa);triangles.push_back(bb);triangles.push_back(dd);
+        screenTriangles.push_back(aa);screenTriangles.push_back(bb);screenTriangles.push_back(dd);
       }
     };
     for(size_t i=1;i<c.centerline.size();++i) {
@@ -347,7 +405,6 @@ void DrawRing(CachedRing& c, float height,float thickness,uint32_t color) {
            c.segmentVisible.size()!=c.centerline.size()-1 ||
            !c.segmentVisible[i-1])) continue;
       const Vec3& a=c.centerline[i-1]; const Vec3& b=c.centerline[i];
-
       const float horizontal=std::hypot(b.x-a.x,b.y-a.y);
       const float maxStep=std::max(0.75f,1.15f*horizontal);
       if(std::fabs(b.z-a.z)>maxStep) continue;
@@ -365,13 +422,34 @@ void DrawRing(CachedRing& c, float height,float thickness,uint32_t color) {
       tri(ao,bo,at);tri(bo,bt,at);
       tri(at,bt,ai);tri(bt,bi,ai);
     }
-    if(!triangles.empty()) {
-      dev->SetFVF(D3DFVF_XYZRHW|D3DFVF_DIFFUSE);
-      dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST,
-        static_cast<UINT>(triangles.size()/3),triangles.data(),sizeof(ScreenVertex));
+    if(!screenTriangles.empty()) {
+      const UINT vertexCount=static_cast<UINT>(screenTriangles.size());
+      const UINT bytes=vertexCount*sizeof(ScreenVertex);
+      bool rendered=false;
+      dev->SetFVF(RING_FVF);
+      for(int attempt=0;attempt<2 && !rendered;++attempt) {
+        IDirect3DVertexBuffer9* vb=RingVertexBuffer(dev);
+        if(!vb) break;
+        void* vertices=nullptr;
+        if(SUCCEEDED(vb->Lock(0,bytes,&vertices,D3DLOCK_DISCARD)) && vertices) {
+          std::memcpy(vertices,screenTriangles.data(),bytes);
+          vb->Unlock();
+          if(SUCCEEDED(dev->SetStreamSource(0,vb,0,sizeof(ScreenVertex))) &&
+             SUCCEEDED(dev->DrawPrimitive(D3DPT_TRIANGLELIST,0,vertexCount/3))) {
+            rendered=true;
+          }
+        }
+        if(!rendered) {
+          vertexBuffer->Release(); vertexBuffer=nullptr;
+        }
+      }
+      if(!rendered) {
+        dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST,vertexCount/3,
+          screenTriangles.data(),sizeof(ScreenVertex));
+      }
     }
   }
-  saved->Apply();saved->Release();
+  saved->Apply();
 }
 
 int __fastcall Script_IsReady(void* L) {
@@ -389,7 +467,6 @@ void __fastcall LoadScriptsHook() {
   reg("TCR_SetOcclusion", Script_SetOcclusion);
 }
 
-// Draws only actual units owned by the player and with an exact matching active totem name.
 void __fastcall FrameHook(void* obj, void* edx, int arg) {
   if(ready.load() && enabled && obj) {
     const void* player = at<const void*>(A_LOCAL_PLAYER);
@@ -437,7 +514,6 @@ bool initHooks() {
 DWORD WINAPI initWorker(void*) {return initHooks()?0:1;}
 }
 
-// namespace
 extern "C" DWORD __cdecl Load() { return initHooks()?0:1; }
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
   if(reason == DLL_PROCESS_ATTACH) {
@@ -447,6 +523,5 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
       if(worker) CloseHandle(worker);
     }
   }
-
   return TRUE;
 }
