@@ -317,7 +317,7 @@ SlashCmdList["TOTEMCIRCLES"]=function(msg)
     if a~="low" and a~="balanced" and a~="high" then
       say("Usage: /tcr performance low|balanced|high");return end
     db.performance=a;sync()
-    say("Performance: "..a..)
+    say("Performance: "..a)
   elseif cmd=="status" then
     say("DLL: "..tostring(type(TCR_IsReady)=="function" and TCR_IsReady() or false)..", enabled="..tostring(db.enabled)..", terrain="..tostring(db.terrain)..", occlusion="..tostring(db.occlusion)..", mastery="..tostring(db.mastery).." (learned="..tostring(masteryLearned()).."), height="..db.height..", thickness="..db.thickness..", segments="..db.segments..", performance="..db.performance)
     for slot=1,4 do
