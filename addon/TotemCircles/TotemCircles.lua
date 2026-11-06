@@ -1,4 +1,4 @@
--- TotemCircles v0.4.8
+-- TotemCircles v0.4.9
 TotemCirclesDB = TotemCirclesDB or {}
 local db = TotemCirclesDB
 local ELEMENTS = {"Fire", "Earth", "Water", "Air"}
@@ -44,9 +44,7 @@ local friendly = {
 }
 local elapsed = 0
 local last = {}
-
 local function say(s) DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffTotemCircles:|r "..s) end
-
 local function normalizeName(name)
   if not name then return "" end
   local n = string.lower(name)
@@ -55,7 +53,6 @@ local function normalizeName(name)
   n = string.gsub(n,"%s+%d+$","")
   return n
 end
-
 local function validRadius(n) return n and n >= 1 and n <= 50 end
 
 local function radiusInDescription(desc)
@@ -105,14 +102,11 @@ local function getRange(slot, name, spellID)
   if db.nameOverride[normalized] then return db.nameOverride[normalized], "name override" end
   local desc=spellDesc(id)
   local fromText=radiusInDescription(desc)
-
   if fromText then return fromText, "summon description" end
-
   if friendly[normalized] and masteryLearned() then
     return 30, "Totemic Mastery fallback (verify)"
   end
   if ranges[normalized] then return ranges[normalized], "range table (verify)" end
-
   if id and id>0 and C_Spell and type(C_Spell.GetSpellRadius)=="function" then
     local ok,base,modified=pcall(C_Spell.GetSpellRadius,id)
     if ok then
@@ -126,7 +120,6 @@ end
 local function getInfo(slot)
   if type(GetTotemInfo)~="function" then return nil end
   local have,name,start,duration,icon,modRate,spellID=GetTotemInfo(slot)
-
   if not name or name=="" then return nil end
   return name,spellID
 end
@@ -144,6 +137,7 @@ local function init()
   if db.terrain==nil then db.terrain=true end
   if db.occlusion==nil then db.occlusion=true end
   if db.mastery==nil then db.mastery="auto" end
+  if db.performance==nil then db.performance="high" end
   for i=1,4 do
     if not db.colors[i] then db.colors[i]=DEFAULT_COLORS[i] end
     if db.visible[i]==nil then db.visible[i]=true end
@@ -157,7 +151,6 @@ local function sync()
       local name,id=getInfo(slot)
       local radius,source=FALLBACK,"inactive"
       if name then radius,source=getRange(slot,name,id) end
-
       TCR_SetTotem(slot,(db.visible[slot]~=false) and (name or "") or "",radius)
       last[slot]={name=name or "",id=id or 0,radius=radius,source=source}
     end
@@ -165,6 +158,10 @@ local function sync()
   if type(TCR_Enable)=="function" then TCR_Enable(db.enabled and 1 or 0) end
   if type(TCR_SetMeshConfig)=="function" then TCR_SetMeshConfig(db.height,db.thickness,db.segments,db.terrain and 1 or 0) end
   if type(TCR_SetOcclusion)=="function" then TCR_SetOcclusion(db.occlusion and 1 or 0) end
+  if type(TCR_SetPerformance)=="function" then
+    local levels={low=0,balanced=1,high=2}
+    TCR_SetPerformance(levels[db.performance] or 2)
+  end
   if type(TCR_SetColor)=="function" then
     for slot=1,4 do TCR_SetColor(slot,db.colors[slot]) end
   end
@@ -226,10 +223,10 @@ SlashCmdList["TOTEMCIRCLES"]=function(msg)
     sync();say("Color defaults restored")
   elseif cmd=="radius" then
     local n=numRadius(a)
-    if not n then say("Usage: /tcr radius <1-50> (sets global override; /tcr auto to reset)") return end
+    if not n then say("Usage: /tcr radius <1-50> (sets global override do | /tcr auto | to reset)") return end
     db.globalRadius=n;sync();say("All circles overridden to "..n.." yd")
   elseif cmd=="auto" then
-    db.globalRadius=nil;db.slotOverride={};sync();say("Auto range enabled; saved per-spell/per-name overrides retained")
+    db.globalRadius=nil;db.slotOverride={};sync();say("Auto range enabled")
   elseif cmd=="slot" then
     local slot=tonumber(a);local n=numRadius(b)
     if not slot or slot~=math.floor(slot) or slot<1 or slot>4 or not n then
@@ -269,7 +266,7 @@ SlashCmdList["TOTEMCIRCLES"]=function(msg)
       if not id or id<1 or id~=math.floor(id) then say("Usage: /tcr clear spell <spellID>");return end
       db.spellOverride[id]=nil
       db.spellOverride[tostring(id)]=nil
-      sync();say("Removed spell override for "..id.."; automatic description lookup restored")
+      sync();say("Removed spell override for "..id)
     elseif a=="slot" then
       local slot=tonumber(b)
       if not slot or slot<1 or slot>4 or slot~=math.floor(slot) then say("Usage: /tcr clear slot <1-4>");return end
@@ -316,8 +313,13 @@ SlashCmdList["TOTEMCIRCLES"]=function(msg)
   elseif cmd=="occlusion" then
     if a~="on" and a~="off" then say("Usage: /tcr occlusion on|off") return end
     db.occlusion=a=="on";sync();say("Wall occlusion: "..a)
+  elseif cmd=="performance" then
+    if a~="low" and a~="balanced" and a~="high" then
+      say("Usage: /tcr performance low|balanced|high");return end
+    db.performance=a;sync()
+    say("Performance: "..a..)
   elseif cmd=="status" then
-    say("DLL: "..tostring(type(TCR_IsReady)=="function" and TCR_IsReady() or false)..", enabled="..tostring(db.enabled)..", terrain="..tostring(db.terrain)..", occlusion="..tostring(db.occlusion)..", mastery="..tostring(db.mastery).." (learned="..tostring(masteryLearned()).."), height="..db.height..", thickness="..db.thickness..", segments="..db.segments)
+    say("DLL: "..tostring(type(TCR_IsReady)=="function" and TCR_IsReady() or false)..", enabled="..tostring(db.enabled)..", terrain="..tostring(db.terrain)..", occlusion="..tostring(db.occlusion)..", mastery="..tostring(db.mastery).." (learned="..tostring(masteryLearned()).."), height="..db.height..", thickness="..db.thickness..", segments="..db.segments..", performance="..db.performance)
     for slot=1,4 do
       local info=last[slot]
       if info and info.name~="" then
@@ -327,6 +329,6 @@ SlashCmdList["TOTEMCIRCLES"]=function(msg)
   else
     say("/tcr color <1-4> <hex> | colors | colorreset <1-4|all> | radius <yards> | auto | slot <1-4> <yards> | spell <spellID> <yards>")
     say("/tcr name <activeSlot> <yards> | clear spell|slot|name|global <id/slot> | overrides | mastery auto|on|off | rangecheck")
-    say("/tcr on|off | hide|show <1-4|all> | visibility | height <yards> | thickness <yards> | segments <n> | terrain on|off | occlusion on|off | status")
+    say("/tcr on|off | hide|show <1-4|all> | visibility | height <yards> | thickness <yards> | segments <n> | terrain on|off | occlusion on|off | performance low|balanced|high | status")
   end
 end

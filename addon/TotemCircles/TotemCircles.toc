@@ -1,6 +1,7 @@
 ## Interface: 11200
 ## Title: TotemCircles
+## Author: Happyness(veber01)
 ## Notes: Terrain-following 3D totem rings requires ClassicAPI and TotemCircles.dll
-## Version: 0.4.8
+## Version: 0.4.9
 ## SavedVariables: TotemCirclesDB
 TotemCircles.lua

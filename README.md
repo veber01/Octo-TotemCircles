@@ -54,6 +54,7 @@ All commands start with `/tcr`. Distances are in **yards**.
 | `/tcr segments <12-192>` | Set ring smoothness. |
 | `/tcr terrain on/off` | Enable/Disable terrain following. |
 | `/tcr occlusion on/off` | Enable/Disable collision-based wall occlusion (default on). |
+| `/tcr performance low/balanced/high` | Changes performance options between levels |
 
 ### Element slots and default colors
 
@@ -71,13 +72,6 @@ Example: `/tcr color 2 8B5A2B`
 Radius priority: **slot override → global override → spell ID override → totem name override → summon-spell description → Totemic Mastery fallback → range table → spell-database fallback → 20 yards**.
 
 All addon settings and overrides are saved in `TotemCirclesDB` and restored on login. WoW writes SavedVariables on `/reload` or a normal logout/exit. Auto-detected ranges may be inaccurate for server-specific totems; use `/tcr rangecheck` and overrides as needed.
-
-## Renderer notes (v0.4.7)
-
-- Continuous terrain-following rings with protection against sudden height jumps and disconnected platforms.
-- Camera-to-ring visibility checks include segment midpoints, faster refreshes and near-camera projection safeguards.
-- Occlusion uses collision traces, not the GPU depth buffer; decorative geometry may differ from collision geometry.
-- Settings, including occlusion, are saved in `TotemCirclesDB`.
 
 ## Gallery
 ![ExampleSmall](https://github.com/veber01/Octo-TotemCircles/blob/main/images/ExampleSmall.png)
