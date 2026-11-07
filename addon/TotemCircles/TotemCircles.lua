@@ -1,4 +1,3 @@
--- TotemCircles v0.4.9
 TotemCirclesDB = TotemCirclesDB or {}
 local db = TotemCirclesDB
 local ELEMENTS = {"Fire", "Earth", "Water", "Air"}
@@ -124,23 +123,47 @@ local function getInfo(slot)
   return name,spellID
 end
 
-local function init()
-  if db.enabled==nil then db.enabled=true end
+local function validColor(value)
+  if type(value)~="string" then return false end
+  if string.len(value)~=6 and string.len(value)~=8 then return false end
+  return not string.find(value,"[^0-9a-fA-F]")
+end
+
+local function validInteger(value,low,high)
+  return type(value)=="number" and value==math.floor(value) and value>=low and value<=high
+end
+
+local function validNumber(value,low,high)
+  return type(value)=="number" and value>=low and value<=high
+end
+
+local function restoreSettings()
+  if type(TotemCirclesDB)~="table" then TotemCirclesDB={} end
+  db=TotemCirclesDB
+  if type(db.enabled)~="boolean" then db.enabled=true end
   if type(db.colors)~="table" then db.colors={} end
   if type(db.visible)~="table" then db.visible={} end
   if type(db.slotOverride)~="table" then db.slotOverride={} end
   if type(db.spellOverride)~="table" then db.spellOverride={} end
   if type(db.nameOverride)~="table" then db.nameOverride={} end
-  if db.height==nil then db.height=0.35 end
-  if db.thickness==nil then db.thickness=0.10 end
-  if db.segments==nil then db.segments=96 end
-  if db.terrain==nil then db.terrain=true end
-  if db.occlusion==nil then db.occlusion=true end
-  if db.mastery==nil then db.mastery="auto" end
-  if db.performance==nil then db.performance="high" end
+  if not validNumber(db.globalRadius,1,50) then db.globalRadius=nil end
+  if not validNumber(db.height,0.02,5) then db.height=0.35 end
+  if not validNumber(db.thickness,0.01,2) then db.thickness=0.10 end
+  if not validInteger(db.segments,12,192) then db.segments=96 end
+  if type(db.terrain)~="boolean" then db.terrain=true end
+  if type(db.occlusion)~="boolean" then db.occlusion=true end
+  if db.mastery~="auto" and db.mastery~="on" and db.mastery~="off" then db.mastery="auto" end
+  if db.performance~="low" and db.performance~="balanced" and db.performance~="high" then db.performance="high" end
   for i=1,4 do
-    if not db.colors[i] then db.colors[i]=DEFAULT_COLORS[i] end
-    if db.visible[i]==nil then db.visible[i]=true end
+    if not validColor(db.colors[i]) then db.colors[i]=DEFAULT_COLORS[i] end
+    if type(db.visible[i])~="boolean" then db.visible[i]=true end
+    if not validNumber(db.slotOverride[i],1,50) then db.slotOverride[i]=nil end
+  end
+  for key,value in pairs(db.spellOverride) do
+    if not validNumber(value,1,50) then db.spellOverride[key]=nil end
+  end
+  for key,value in pairs(db.nameOverride) do
+    if not validNumber(value,1,50) then db.nameOverride[key]=nil end
   end
 end
 
@@ -167,17 +190,23 @@ local function sync()
   end
 end
 
+restoreSettings()
 local f=CreateFrame("Frame")
 f:RegisterEvent("PLAYER_ENTERING_WORLD")
 f:RegisterEvent("PLAYER_TOTEM_UPDATE")
 f:RegisterEvent("ADDON_LOADED")
-f:SetScript("OnEvent",function() init();sync() end)
+f:SetScript("OnEvent",function()
+  if event=="ADDON_LOADED" then
+    if arg1~="TotemCircles" then return end
+    restoreSettings()
+  end
+  sync()
+end)
 f:SetScript("OnUpdate",function()
   elapsed=elapsed+(arg1 or 0)
   if elapsed>=0.5 then elapsed=0;sync() end
 end)
 
-init()
 local function numRadius(s) local n=tonumber(s); if validRadius(n) then return n end end
 local function colorInput(s)
   if not s then return nil end
@@ -320,6 +349,7 @@ SlashCmdList["TOTEMCIRCLES"]=function(msg)
     say("Performance: "..a)
   elseif cmd=="status" then
     say("DLL: "..tostring(type(TCR_IsReady)=="function" and TCR_IsReady() or false)..", enabled="..tostring(db.enabled)..", terrain="..tostring(db.terrain)..", occlusion="..tostring(db.occlusion)..", mastery="..tostring(db.mastery).." (learned="..tostring(masteryLearned()).."), height="..db.height..", thickness="..db.thickness..", segments="..db.segments..", performance="..db.performance)
+    say("Global radius: "..tostring(db.globalRadius or "auto"))
     for slot=1,4 do
       local info=last[slot]
       if info and info.name~="" then

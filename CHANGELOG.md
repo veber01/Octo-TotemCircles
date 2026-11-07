@@ -1,3 +1,9 @@
+## QoL stuff (v0.5)
+
+- Added a UI window for all the customizable settings so its easier to personalize the addon. (use minimap button or /tcrui /tcr options commands)
+- Added Minimap button
+- Made all custom settings persistent
+
 ## More Performance changes (v0.4.9)
 
 - **Offscreen culling** Skip rendering and visibility updates for circles offscreen 
